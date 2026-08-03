@@ -11,8 +11,6 @@
 #  "swiss_municipalities.csv", used as the common input frame by all the
 #  quantum stratification scripts in this folder.
 # ================================================================================
-
-setwd("D:/Google Drive/Sampling/QuantumComputing/1.SamplingStrata")
 library(SamplingStrata)
 
 data("swissmunicipalities")
@@ -53,7 +51,7 @@ alloc <-bethel(strata,cv)
 sum(alloc)
 # [1] 105
 # Find an initial solution and a suitable number of final strata in each domain -----------
-set.seed(4321)
+set.seed(123)
 solutionKmean <- KmeansSolution(strata = strata,    # atomic strata
                                 errors = cv,        # precision constraints
                                 maxclusters = 4)   # max number of strata to be evaluated 
@@ -75,7 +73,7 @@ set.seed(1234)
 solution <- optimStrata(method = "atomic",          # method
                         framesamp = frame,            # sampling frame
                         errors = cv,                  # precision constraints
-                        nStrata = 4,             # strata to be obtained in the final stratification
+                        nStrata = nstrat,             # strata to be obtained in the final stratification
                         # suggestions = solutionKmean,  # initial solution
                         iter = 500,                    # number of iterations
                         pops = 10)                    # number of stratifications evaluated at each iteration
