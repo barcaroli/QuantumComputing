@@ -12,7 +12,6 @@
 #  quantum stratification scripts in this folder.
 # ================================================================================
 
-setwd("D:/Google Drive/Sampling/QuantumComputing/1.SamplingStrata")
 library(SamplingStrata)
 
 data("swissmunicipalities")
@@ -53,7 +52,7 @@ alloc <-bethel(strata,cv)
 sum(alloc)
 # [1] 105
 # Find an initial solution and a suitable number of final strata in each domain -----------
-set.seed(4321)
+set.seed(123)
 solutionKmean <- KmeansSolution(strata = strata,    # atomic strata
                                 errors = cv,        # precision constraints
                                 maxclusters = 4)   # max number of strata to be evaluated 
