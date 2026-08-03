@@ -11,6 +11,7 @@
 #  "swiss_municipalities.csv", used as the common input frame by all the
 #  quantum stratification scripts in this folder.
 # ================================================================================
+
 library(SamplingStrata)
 
 data("swissmunicipalities")
