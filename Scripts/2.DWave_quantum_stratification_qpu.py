@@ -281,31 +281,31 @@ def create_sampler(mode):
     """
     if mode == 'qpu':
         from dwave.system import DWaveSampler, EmbeddingComposite
-        print("  Connessione alla QPU D-Wave...")
+        print("  Connecting to the D-Wave QPU...")
         qpu = DWaveSampler()
         print(f"  QPU: {qpu.properties.get('chip_id', 'N/A')}")
-        print(f"  Topologia: {qpu.properties.get('topology', {}).get('type', 'N/A')}")
-        print(f"  Qubit disponibili: {len(qpu.nodelist)}")
-        print(f"  Coupler disponibili: {len(qpu.edgelist)}")
+        print(f"  Topology: {qpu.properties.get('topology', {}).get('type', 'N/A')}")
+        print(f"  Qubits available: {len(qpu.nodelist)}")
+        print(f"  Couplers available: {len(qpu.edgelist)}")
         sampler = EmbeddingComposite(qpu)
         return sampler, 'qpu'
     
     elif mode == 'hybrid':
         from dwave.system import LeapHybridBQMSampler
-        print("  Connessione al solver ibrido Leap...")
+        print("  Connecting to the Leap hybrid solver...")
         sampler = LeapHybridBQMSampler()
         print(f"  Solver: {sampler.solver.name}")
-        print(f"  Variabili max: {sampler.properties.get('maximum_number_of_variables', 'N/A')}")
+        print(f"  Max variables: {sampler.properties.get('maximum_number_of_variables', 'N/A')}")
         return sampler, 'hybrid'
     
     elif mode == 'simulate':
         from dwave.samplers import SimulatedAnnealingSampler
-        print("  Modalita simulazione (nessun hardware quantum)")
+        print("  Simulation mode (no quantum hardware)")
         sampler = SimulatedAnnealingSampler()
         return sampler, 'simulate'
     
     else:
-        raise ValueError(f"Modalita sconosciuta: {mode}. Usa 'qpu', 'hybrid', o 'simulate'.")
+        raise ValueError(f"Unknown mode: {mode}. Use 'qpu', 'hybrid', or 'simulate'.")
 
 
 def solve(bqm, sampler, mode, n_atomic, K, num_reads=200, num_sweeps=12000, seed=42):
@@ -410,91 +410,91 @@ def main():
         description='Quantum Optimal Stratification - D-Wave',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Esempi:
-  # Test locale (nessun token D-Wave necessario)
+Examples:
+  # Local test (no D-Wave token required)
   python quantum_stratification_qpu.py --mode simulate --csv swissmunicipalities.csv
   
-  # Solver ibrido Leap (raccomandato, richiede token)
+  # Leap hybrid solver (recommended, requires a token)
   python quantum_stratification_qpu.py --mode hybrid --csv swissmunicipalities.csv
   
-  # QPU diretta (richiede token, problemi piccoli)
+  # Direct QPU (requires a token, small problems only)
   python quantum_stratification_qpu.py --mode qpu --csv swissmunicipalities.csv --K 3
 
-Configurazione token D-Wave:
+D-Wave token configuration:
   $ dwave config create
-  oppure: export DWAVE_API_TOKEN="DEV-xxxx..."
+  or: export DWAVE_API_TOKEN="DEV-xxxx..."
         """)
     parser.add_argument('--mode', choices=['qpu', 'hybrid', 'simulate'],
                        default='simulate',
-                       help='Backend: qpu (QPU diretta), hybrid (Leap ibrido), simulate (classico)')
+                       help='Backend: qpu (direct QPU), hybrid (Leap hybrid), simulate (classical)')
     parser.add_argument('--csv', default='swissmunicipalities.csv',
-                       help='Path al CSV del frame')
+                       help='Path to the frame CSV')
     parser.add_argument('--reg', type=int, default=None,
-                       help='Filtra il frame su una regione (colonna REG), es. --reg 1')
+                       help='Filter the frame to a region (REG column), e.g. --reg 1')
     parser.add_argument('--K', type=int, default=4,
-                       help='Numero di cluster target (default: 4)')
+                       help='Target number of clusters (default: 4)')
     parser.add_argument('--cv', type=float, default=0.10,
                        help='CV target (default: 0.10)')
     parser.add_argument('--y1', default='Surfacesbois',
-                       help='Prima variabile target Y1 (default: Surfacesbois)')
+                       help='First target variable Y1 (default: Surfacesbois)')
     parser.add_argument('--y2', default='Airind',
-                       help='Seconda variabile target Y2 (default: Airind)')
+                       help='Second target variable Y2 (default: Airind)')
     parser.add_argument('--benchmark', type=int, default=89,
-                       help='Valore di riferimento classico da mostrare (default: 89)')
+                       help='Classical reference value to display (default: 89)')
     parser.add_argument('--num-reads', type=int, default=200,
-                       help='Numero di read del simulated annealing (default: 200; '
-                            'aumentare a 1000+ per problemi difficili)')
+                       help='Number of simulated-annealing reads (default: 200; '
+                            'increase to 1000+ for harder problems)')
     parser.add_argument('--num-sweeps', type=int, default=12000,
-                       help='Numero di sweep per read (default: 12000; aumentare a 50000+)')
+                       help='Number of sweeps per read (default: 12000; increase to 50000+)')
     parser.add_argument('--seed', type=int, default=42,
-                       help='Seed del simulated annealing (default: 42)')
+                       help='Simulated-annealing seed (default: 42)')
     parser.add_argument('--best-of', type=int, default=1,
-                       help='Esegue N volte con seed diversi e tiene il campione '
-                            'minimo (default: 1). Utile perche il SA e stocastico.')
+                       help='Runs N times with different seeds and keeps the minimum '
+                            'sample size (default: 1). Useful since SA is stochastic.')
     
     args = parser.parse_args()
     
     print("=" * 72)
     print(" QUANTUM OPTIMAL STRATIFICATION - D-Wave")
-    print(f" Modalita: {args.mode.upper()}")
+    print(f" Mode: {args.mode.upper()}")
     if args.mode == 'qpu':
-        print(" [Q]  ESECUZIONE SU HARDWARE QUANTUM REALE")
+        print(" [Q]  RUNNING ON REAL QUANTUM HARDWARE")
     elif args.mode == 'hybrid':
-        print(" [H] ESECUZIONE IBRIDA (QPU + classico)")
+        print(" [H] HYBRID EXECUTION (QPU + classical)")
     else:
-        print(" [PC] SIMULAZIONE CLASSICA (nessun hardware quantum)")
+        print(" [PC] CLASSICAL SIMULATION (no quantum hardware)")
     print("=" * 72)
     
     # -- 1. DATA PREPARATION --
-    print("\n[1] Preparazione dati...")
+    print("\n[1] Preparing data...")
     atomic, df = prepare_frame(args.csv, reg=args.reg, y1=args.y1, y2=args.y2)
     n_atomic = len(atomic)
     K = args.K
     cv_targets = [args.cv, args.cv]
     
-    print(f"  Frame: {len(df)} unita")
-    print(f"  Strati atomici: {n_atomic} (di cui {(atomic['N']==1).sum()} con N=1)")
+    print(f"  Frame: {len(df)} units")
+    print(f"  Atomic strata: {n_atomic} (of which {(atomic['N']==1).sum()} have N=1)")
     print(f"  K = {K}, CV target = {args.cv}")
     
     # -- 2. QUBO --
-    print(f"\n[2] Costruzione QUBO...")
+    print(f"\n[2] Building the QUBO...")
     t0 = time.time()
     bqm, dist_matrix = build_qubo(atomic, K)
     t_build = time.time() - t0
     
-    print(f"  Variabili: {len(bqm.variables)}")
-    print(f"  Interazioni: {len(bqm.quadratic)}")
-    print(f"  Tempo costruzione: {t_build:.2f}s")
+    print(f"  Variables: {len(bqm.variables)}")
+    print(f"  Interactions: {len(bqm.quadratic)}")
+    print(f"  Build time: {t_build:.2f}s")
     
     # -- 3. SAMPLER --
-    print(f"\n[3] Inizializzazione sampler ({args.mode})...")
+    print(f"\n[3] Initializing the sampler ({args.mode})...")
     sampler, mode = create_sampler(args.mode)
     
     # -- 4. SOLVING --
-    print(f"\n[4] Risoluzione...")
+    print(f"\n[4] Solving...")
     if args.best_of > 1 and mode == 'simulate':
-        print(f"  Modalita best-of-{args.best_of}: eseguo {args.best_of} volte "
-              f"con seed diversi, tengo la soluzione a energia minima.")
+        print(f"  Best-of-{args.best_of} mode: running {args.best_of} times "
+              f"with different seeds, keeping the minimum-energy solution.")
         best_energy = None
         best_result = None
         for r in range(args.best_of):
@@ -503,7 +503,7 @@ Configurazione token D-Wave:
                         num_reads=args.num_reads, num_sweeps=args.num_sweeps,
                         seed=seed_r)
             e = res[1]
-            print(f"    run {r+1}/{args.best_of} (seed={seed_r}): energia={e:.1f}")
+            print(f"    run {r+1}/{args.best_of} (seed={seed_r}): energy={e:.1f}")
             if best_energy is None or e < best_energy:
                 best_energy = e
                 best_result = res
@@ -513,12 +513,12 @@ Configurazione token D-Wave:
             solve(bqm, sampler, mode, n_atomic, K,
                   num_reads=args.num_reads, num_sweeps=args.num_sweeps, seed=args.seed)
     
-    print(f"  Tempo totale: {t_solve:.3f}s")
-    print(f"  Energia: {energy:.2f}")
-    print(f"  Violazioni: {violations}")
+    print(f"  Total time: {t_solve:.3f}s")
+    print(f"  Energy: {energy:.2f}")
+    print(f"  Violations: {violations}")
     
     if timing and mode == 'qpu':
-        print(f"\n  -- Timing QPU dettagliato --")
+        print(f"\n  -- Detailed QPU timing --")
         for key, val in timing.items():
             if isinstance(val, (int, float)):
                 if val > 1e6:
@@ -528,7 +528,7 @@ Configurazione token D-Wave:
     
     # -- 5. REPAIR --
     if unassigned:
-        print(f"\n[5] Riparazione {len(unassigned)} strati non assegnati...")
+        print(f"\n[5] Repairing {len(unassigned)} unassigned strata...")
         features = atomic[['M1', 'M2', 'S1', 'S2']].values
         N_v = atomic['N'].values.astype(float)
         centroids = {}
@@ -545,17 +545,17 @@ Configurazione token D-Wave:
                 assignment[i] = 0
     
     # -- 6. EVALUATION --
-    print(f"\n[6] Valutazione soluzione...")
+    print(f"\n[6] Evaluating the solution...")
     agg = aggregate(atomic, assignment, K)
     n_sample, alloc, cvs = bethel(agg, cv_targets)
     
     print(f"\n  +======================================+")
-    print(f"  |  RISULTATO ({args.mode.upper():>8})              |")
-    print(f"  |  Dimensione campione: {n_sample:>5}          |")
-    print(f"  |  Strati aggregati:    {len(agg):>5}          |")
+    print(f"  |  RESULT ({args.mode.upper():>8})                  |")
+    print(f"  |  Sample size:         {n_sample:>5}          |")
+    print(f"  |  Aggregated strata:   {len(agg):>5}          |")
     print(f"  |  CV(Y1): {cvs[0]:>7.4f}                  |")
     print(f"  |  CV(Y2): {cvs[1]:>7.4f}                  |")
-    print(f"  |  Riferimento (classico): {args.benchmark:>3}          |")
+    print(f"  |  Reference (classical): {args.benchmark:>3}          |")
     print(f"  +======================================+")
     
     print(f"\n  {'#':>3} {'N':>6} {'Atom':>5} {'M(Y1)':>10} {'M(Y2)':>10} "
@@ -586,7 +586,7 @@ Configurazione token D-Wave:
     outfile = f'result_{args.mode}_K{K}.json'
     with open(outfile, 'w') as f:
         json.dump(result, f, indent=2, default=str)
-    print(f"\n  Risultati salvati in {outfile}")
+    print(f"\n  Results saved to {outfile}")
     
     return result
 

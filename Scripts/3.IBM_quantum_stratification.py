@@ -1,7 +1,7 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 ================================================================================
- QUANTUM OPTIMAL STRATIFICATION â€” IBM Quantum (Qiskit QAOA)
+ QUANTUM OPTIMAL STRATIFICATION — IBM Quantum (Qiskit QAOA)
 ================================================================================
  Solves the optimal stratification problem using QAOA on real IBM hardware.
  
@@ -15,27 +15,62 @@
       then "Manage account" -> "API token" -> copy the token.
  
  REAL-HARDWARE STRATEGY:
-   The full problem (164 strata x 4 clusters = 656 qubits) is too large
-   for NISQ hardware. Two-level strategy:
-   1. Classical pre-grouping: 164 atomic strata -> ~12 macro-strata
-   2. Quantum QAOA: partition the 12 macro-strata into K clusters
-      Requires only 12 qubits (one per macro-stratum, binary encoding K=2)
-      or 24 qubits for K=4 (2-bit encoding per macro-stratum)
-   
-   This is honestly only ~10% quantum: the pre-grouping is classical,
-   only the final partition uses QAOA on a real QPU.
- 
+   The results reported in the accompanying paper use the reduced,
+   twenty-atomic-stratum frame (swissmunicipalities, region REG=1,
+   discretised into 5x5 = 20 non-empty atomic strata). At that scale no
+   classical pre-grouping is needed: each atomic stratum is encoded
+   directly with a binary-label Hamiltonian, 1 qubit/stratum for K=2 or
+   2 qubits/stratum for K=4 -> 40 qubits for the 20-stratum, K=4 case
+   actually run on ibm_kingston. This is the DEFAULT behaviour below.
+   With direct encoding, the only classical stages are the Hamiltonian
+   construction, transpilation, the COBYLA parameter loop, decoding and
+   the final Bethel-Chromy evaluation; the state preparation/measurement
+   is genuinely quantum. The binding constraint at this scale is circuit
+   depth from SWAP-routing on the sparse heavy-hex lattice, NOT qubit
+   count (see the paper, Sections 4.6 and 5.1).
+
+   An earlier, exploratory attempt used a much larger frame (164 atomic
+   strata, one-hot QUBO would need 656 qubits at K=4) which is far
+   beyond what NISQ hardware or any of the free tiers tested could
+   accept; that frame was in fact what got the Dirac-3 free-tier
+   submission rejected, and was abandoned in favour of the 20-stratum
+   frame before any real hardware run was performed (paper, Section
+   5.1). For that scale, a two-level strategy is still available here
+   as an OPT-IN, legacy path (--force-pregroup):
+   1. Classical pre-grouping: N atomic strata -> --n-macro macro-strata
+      (k-means on standardised stratum features)
+   2. Quantum QAOA: partition the macro-strata into K clusters
+      (1 qubit/macro-stratum for K=2, 2 qubits/macro-stratum for K=4)
+   This legacy path is only ~10% quantum: the pre-grouping step is
+   classical and coarsens the problem before QAOA ever runs. It is kept
+   here for experimentation with frames too large for direct encoding,
+   but it is NOT the pipeline behind the results in the paper.
+
  MODES:
    --mode simulator   Local Qiskit simulator (no token required)
    --mode hardware    Real IBM QPU via cloud (token required)
- 
+
+ ENCODING:
+   Default            Direct: 1 qubit/atomic stratum (K=2) or 2 qubits/
+                       atomic stratum (K=4). Matches the paper exactly
+                       when run on the 20-stratum reduced frame.
+   --force-pregroup    Legacy: classical k-means pre-grouping into
+                       --n-macro macro-strata before QAOA (for frames
+                       too large to encode directly, e.g. the original
+                       164-stratum exploratory frame). Not used for the
+                       results reported in the paper.
+
  USAGE:
-   # Local (test)
+   # Local (test), direct encoding on the 20-stratum reduced frame
    python quantum_stratification_ibm.py --mode simulator --csv swissmunicipalities.csv
-   
-   # Real IBM hardware
+
+   # Real IBM hardware, direct encoding (as in the paper)
    python quantum_stratification_ibm.py --mode hardware --csv swissmunicipalities.csv \
        --token "YOUR_IBM_TOKEN"
+
+   # Legacy pre-grouped path, for a much larger frame
+   python quantum_stratification_ibm.py --mode simulator --csv large_frame.csv \
+       --force-pregroup --n-macro 12
 ================================================================================
 """
 
@@ -127,14 +162,45 @@ def bethel(agg, cv_targets=[0.1,0.1], minnumstr=2):
 
 
 # ==============================================================================
-# STEP 1: CLASSICAL PRE-GROUPING (164 -> ~12 macro-strata)
+# STEP 1: MACRO-STRATA (direct encoding by default, legacy pre-grouping opt-in)
 # ==============================================================================
+
+def direct_group(atomic):
+    """
+    DEFAULT PATH - matches the paper.
+    Wrap each atomic stratum as its own "macro-stratum" (identity
+    mapping, member_indices = [idx]). No classical aggregation happens
+    here: every atomic stratum gets its own qubit(s) downstream, exactly
+    as in the direct binary-label encoding used for the real IBM run on
+    the 20-stratum frame (paper, Section 4.6). This keeps the rest of
+    the pipeline (build_ising_hamiltonian, decode_counts,
+    macro_to_atomic_assignment) unchanged, since it already operates on
+    a "macro_strata" dataframe - here that dataframe is just the atomic
+    strata themselves.
+    """
+    macro = []
+    for idx, row in atomic.reset_index(drop=True).iterrows():
+        macro.append({
+            'macro_id': idx, 'N': row['N'], 'n_atomic': 1,
+            'member_indices': [idx],
+            'M1': row['M1'], 'M2': row['M2'],
+            'S1': row['S1'], 'S2': row['S2'],
+        })
+    labs = np.arange(len(atomic))
+    return pd.DataFrame(macro), labs
+
 
 def pre_group(atomic, n_groups=12):
     """
-    Pre-group the 164 atomic strata into n_groups macro-strata
-    using k-means. This makes the problem tractable for QAOA.
-    This step is entirely CLASSICAL.
+    LEGACY, OPT-IN PATH (--force-pregroup) - not used in the paper.
+    Pre-group the atomic strata into n_groups macro-strata using
+    k-means, for frames too large to encode one qubit (or two, for
+    K=4) per atomic stratum directly - e.g. the original ~164-stratum
+    exploratory frame mentioned in the paper (Section 5.1), which was
+    abandoned before any real-hardware run in favour of the 20-stratum
+    frame that direct_group() above handles without any aggregation.
+    This step is entirely CLASSICAL, and it coarsens the problem before
+    QAOA ever sees it.
     """
     feats = atomic[['M1','M2','S1','S2']].values.copy()
     for c in range(4):
@@ -175,7 +241,7 @@ def build_ising_hamiltonian(macro_strata, K=2):
     For K=2: each macro-stratum is one qubit. z_i = +1 (cluster 0) or -1 (cluster 1).
     Objective: minimize the intra-cluster distance.
     
-    H = Î£_{i<j} J_ij Â· Z_i Â· Z_j + Î£_i h_i Â· Z_i
+    H = Σ_{i<j} J_ij · Z_i · Z_j + Σ_i h_i · Z_i
     
     where J_ij > 0 if i,j should be in the SAME cluster (attractive)
     and J_ij < 0 if they should be in DIFFERENT clusters.
@@ -203,9 +269,9 @@ def build_ising_hamiltonian(macro_strata, K=2):
     
     if K == 2:
         # -- Direct encoding: 1 qubit per macro-stratum --
-        # x_i âˆˆ {0,1} â†’ Z_i = 1-2x_i â†’ x_i = (1-Z_i)/2
-        # Obj: Î£_{i<j} w_ij * x_i * x_j + Î£_{i<j} w_ij * (1-x_i)*(1-x_j)
-        # In Ising: Î£_{i<j} w_ij/2 * (1 + Z_i*Z_j)
+        # x_i ∈ {0,1} → Z_i = 1-2x_i → x_i = (1-Z_i)/2
+        # Obj: Σ_{i<j} w_ij * x_i * x_j + Σ_{i<j} w_ij * (1-x_i)*(1-x_j)
+        # In Ising: Σ_{i<j} w_ij/2 * (1 + Z_i*Z_j)
         # We want to MINIMIZE within-cluster distance -> minimize when
         # similar strata are together -> penalize DISSIMILAR pairs in the same cluster
         
@@ -225,7 +291,7 @@ def build_ising_hamiltonian(macro_strata, K=2):
     
     elif K == 4:
         # -- Binary encoding: 2 qubits per macro-stratum --
-        # cluster k âˆˆ {0,1,2,3} â†’ (q_{2i}, q_{2i+1}) 
+        # cluster k ∈ {0,1,2,3} → (q_{2i}, q_{2i+1}) 
         # Same cluster = both qubit pairs are equal
         
         n_qubits = 2 * n
@@ -266,7 +332,7 @@ def build_ising_hamiltonian(macro_strata, K=2):
 def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None, 
                p=2, maxiter=100, shots=4096):
     """
-    â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+    ╔══════════════════════════════════════════════════════════════════╗
     |  THIS IS THE GENUINELY QUANTUM PART OF THE SCRIPT        |
     |  The QAOA circuit runs on a real IBM QPU (or simulator) |
     +---------------------------------------------------------+
@@ -278,8 +344,8 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
 
     def build_qaoa_ansatz(hamiltonian, reps):
         n = hamiltonian.num_qubits
-        gamma = ParameterVector('Î³', reps)
-        beta  = ParameterVector('Î²', reps)
+        gamma = ParameterVector('γ', reps)
+        beta  = ParameterVector('β', reps)
         qc = QuantumCircuit(n)
         qc.h(range(n))
         for layer in range(reps):
@@ -305,8 +371,8 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
 
     # Build QAOA ansatz
     ansatz = build_qaoa_ansatz(hamiltonian, reps=p)
-    print(f"    Circuito QAOA: {ansatz.num_qubits} qubit, p={p}")
-    print(f"    Parametri variazionali: {ansatz.num_parameters}")
+    print(f"    QAOA circuit: {ansatz.num_qubits} qubits, p={p}")
+    print(f"    Variational parameters: {ansatz.num_parameters}")
     
     if mode == 'simulator':
         # -- LOCAL SIMULATOR --
@@ -326,7 +392,7 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
             objective_values.append(float(cost))
             return float(cost)
         
-        print(f"    Ottimizzazione COBYLA (max {maxiter} iterazioni)...")
+        print(f"    COBYLA optimization (max {maxiter} iterations)...")
         t0 = time.time()
         result = minimize(cost_fn, x0, method='COBYLA',
                          options={'maxiter': maxiter, 'rhobeg': 0.5})
@@ -356,7 +422,7 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
         from qiskit.primitives import StatevectorEstimator
 
         # -- Step 1: classical parameter optimization --
-        print(f"    Ottimizzazione parametri (simulatore locale)...")
+        print(f"    Optimizing parameters (local simulator)...")
         estimator = StatevectorEstimator()
         x0 = np.random.uniform(-np.pi, np.pi, ansatz.num_parameters)
         objective_values = []
@@ -367,17 +433,17 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
             cost = float(result[0].data.evs)
             objective_values.append(cost)
             if len(objective_values) % 10 == 0:
-                print(f"      Iterazione {len(objective_values)}: costo={cost:.4f}")
+                print(f"      Iteration {len(objective_values)}: cost={cost:.4f}")
             return cost
 
         t0 = time.time()
         opt_result = minimize(cost_fn, x0, method='COBYLA',
                               options={'maxiter': maxiter, 'rhobeg': 0.5})
         t_opt = time.time() - t0
-        print(f"    Parametri ottimali trovati (energia={opt_result.fun:.4f})")
+        print(f"    Optimal parameters found (energy={opt_result.fun:.4f})")
 
-        # â”€â”€ Step 2: single QPU job for sampling â”€â”€
-        print(f"    Connessione a IBM Quantum...")
+        # ── Step 2: single QPU job for sampling ──
+        print(f"    Connecting to IBM Quantum...")
         service = QiskitRuntimeService(
             channel='ibm_quantum_platform',
             token=token
@@ -388,7 +454,7 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
             simulator=False,
             min_num_qubits=n_qubits
         )
-        print(f"    Backend: {backend.name} ({backend.num_qubits} qubit)")
+        print(f"    Backend: {backend.name} ({backend.num_qubits} qubits)")
 
         pm = generate_preset_pass_manager(optimization_level=3, backend=backend)
         optimal_circuit = ansatz.assign_parameters(
@@ -396,24 +462,24 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
         optimal_circuit.measure_all()
         isa_circuit = pm.run(optimal_circuit)
 
-        print(f"    Circuito transpilato: profonditÃ ={isa_circuit.depth()}, "
-              f"porte CX={isa_circuit.count_ops().get('cx', 0) + isa_circuit.count_ops().get('ecr', 0)}")
-        print(f"    Invio job QPU ({shots} shot)...")
+        print(f"    Transpiled circuit: depth={isa_circuit.depth()}, "
+              f"CX gates={isa_circuit.count_ops().get('cx', 0) + isa_circuit.count_ops().get('ecr', 0)}")
+        print(f"    Submitting QPU job ({shots} shots)...")
 
         sampler = Sampler(mode=backend)
         job = sampler.run([isa_circuit], shots=shots)
-        print(f"    Job ID: {job.job_id()}  â€” in attesa risultati...")
+        print(f"    Job ID: {job.job_id()}  — waiting for results...")
         sample_result = job.result()
         counts = sample_result[0].data.meas.get_counts()
 
         return counts, opt_result.fun, t_opt, objective_values
     
     else:
-        raise ValueError(f"ModalitÃ  sconosciuta: {mode}")
+        raise ValueError(f"Unknown mode: {mode}")
 
 
 # ==============================================================================
-# STEP 3: DECODE QAOA RESULTS â†’ CLUSTER ASSIGNMENT
+# STEP 3: DECODE QAOA RESULTS → CLUSTER ASSIGNMENT
 # ==============================================================================
 
 def decode_counts(counts, n_macro, K=2):
@@ -463,7 +529,7 @@ def macro_to_atomic_assignment(macro_assignment, macro_strata, n_atomic):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Quantum Stratification â€” IBM Quantum (QAOA)',
+        description='Quantum Stratification — IBM Quantum (QAOA)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -485,59 +551,76 @@ To obtain the IBM token:
     parser.add_argument('--token', default=None,
                        help='IBM Quantum API token')
     parser.add_argument('--K', type=int, default=2, choices=[2, 4],
-                       help='Cluster (2 o 4). K=2: 12 qubit. K=4: 24 qubit.')
+                       help='Number of clusters (2 or 4). With direct encoding (default): '
+                            '1 qubit/atomic stratum for K=2, 2 qubits/atomic stratum for K=4.')
+    parser.add_argument('--force-pregroup', action='store_true',
+                       help='Legacy path, not used for the results in the paper: '
+                            'classically groups (k-means) the atomic strata into '
+                            '--n-macro macro-strata before QAOA. Only useful for frames '
+                            'too large for direct encoding (e.g. the original '
+                            'exploratory ~164-stratum frame, later abandoned).')
     parser.add_argument('--n-macro', type=int, default=12,
-                       help='Numero di macro-strati (default: 12)')
+                       help='Number of macro-strata, used only with --force-pregroup (default: 12)')
     parser.add_argument('--p', type=int, default=2,
-                       help='ProfonditÃ  QAOA (default: 2)')
+                       help='QAOA depth (default: 2)')
     parser.add_argument('--maxiter', type=int, default=80,
-                       help='Max iterazioni ottimizzatore (default: 80)')
+                       help='Max optimizer iterations (default: 80)')
     
     args = parser.parse_args()
     
     print("=" * 72)
-    print(" QUANTUM STRATIFICATION â€” IBM Quantum (QAOA)")
-    print(f" ModalitÃ : {args.mode.upper()}")
+    print(" QUANTUM STRATIFICATION — IBM Quantum (QAOA)")
+    print(f" Mode: {args.mode.upper()}")
     if args.mode == 'hardware':
-        print(" âš›ï¸  ESECUZIONE SU PROCESSORE IBM QUANTUM REALE")
+        print(" ⚛️  RUNNING ON A REAL IBM QUANTUM PROCESSOR")
     else:
-        print(" ðŸ’» SIMULATORE LOCALE (nessun token necessario)")
+        print(" 💻 LOCAL SIMULATOR (no token required)")
     print("=" * 72)
     
     # -- 1. DATA --
-    print("\n[1] Preparazione dati...")
+    print("\n[1] Preparing data...")
     atomic, df = prepare_frame(args.csv)
     n_atomic = len(atomic)
     K = args.K
     
-    print(f"    Frame: {len(df)} unitÃ ")
-    print(f"    Strati atomici: {n_atomic}")
+    print(f"    Frame: {len(df)} units")
+    print(f"    Atomic strata: {n_atomic}")
     print(f"    K = {K}")
     
-    # -- 2. PRE-GROUPING (CLASSICAL) --
-    print(f"\n[2] Pre-raggruppamento classico: {n_atomic} â†’ {args.n_macro} macro-strati")
-    macro, pre_labels = pre_group(atomic, n_groups=args.n_macro)
+    # -- 2. MACRO-STRATA: direct encoding (default) or legacy pre-grouping --
+    if args.force_pregroup:
+        print(f"\n[2] (legacy, --force-pregroup) Classical pre-grouping: "
+              f"{n_atomic} -> {args.n_macro} macro-strata")
+        print(f"    WARNING: this path is not the one used for the results in the paper; "
+              f"it is only ~10% quantum (QAOA already sees a classically coarsened problem).")
+        macro, pre_labels = pre_group(atomic, n_groups=args.n_macro)
+    else:
+        print(f"\n[2] Direct encoding (no classical grouping): "
+              f"{n_atomic} atomic strata -> {n_atomic} units to encode")
+        print(f"    This is the path used for the results in the paper on the "
+              f"20-atomic-stratum frame (Section 4.6).")
+        macro, pre_labels = direct_group(atomic)
     n_macro = len(macro)
-    print(f"    Macro-strati effettivi: {n_macro}")
+    print(f"    Units to encode: {n_macro}")
     for _, row in macro.iterrows():
-        print(f"      Macro {int(row['macro_id'])}: {int(row['n_atomic'])} atomici, "
+        print(f"      Unit {int(row['macro_id'])}: {int(row['n_atomic'])} atomic, "
               f"N={int(row['N'])}, M1={row['M1']:.0f}, M2={row['M2']:.1f}")
     
     # -- 3. ISING HAMILTONIAN --
-    print(f"\n[3] Costruzione Hamiltoniana Ising...")
+    print(f"\n[3] Building the Ising Hamiltonian...")
     pauli_list, n_qubits, merge_cost = build_ising_hamiltonian(macro, K)
-    print(f"    Termini Pauli: {len(pauli_list)}")
-    print(f"    Qubit necessari: {n_qubits}")
+    print(f"    Pauli terms: {len(pauli_list)}")
+    print(f"    Qubits required: {n_qubits}")
     
-    # â”€â”€ 4. QAOA â”€â”€
+    # ── 4. QAOA ──
     print(f"\n[4] QAOA (p={args.p})...")
-    print(f"    â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—")
-    print(f"    â•‘  Questo Ã¨ il calcolo GENUINAMENTE QUANTUM     â•‘")
+    print(f"    ╔════════════════════════════════════════════════╗")
+    print(f"    ║  THIS IS THE GENUINELY QUANTUM COMPUTATION    ║")
     if args.mode == 'hardware':
-        print(f"    â•‘  Eseguito su qubit superconduttori IBM reali  â•‘")
+        print(f"    ║  Executed on real IBM superconducting qubits  ║")
     else:
-        print(f"    â•‘  Simulato localmente (nessun effetto quantum)  â•‘")
-    print(f"    â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+        print(f"    ║  Simulated locally (no quantum effect)        ║")
+    print(f"    ╚════════════════════════════════════════════════╝")
     
     np.random.seed(42)
     counts, energy, t_opt, obj_values = solve_qaoa(
@@ -546,39 +629,39 @@ To obtain the IBM token:
         p=args.p, maxiter=args.maxiter
     )
     
-    print(f"\n    Tempo ottimizzazione: {t_opt:.1f}s")
-    print(f"    Energia finale: {energy:.4f}")
-    print(f"    Iterazioni: {len(obj_values)}")
+    print(f"\n    Optimization time: {t_opt:.1f}s")
+    print(f"    Final energy: {energy:.4f}")
+    print(f"    Iterations: {len(obj_values)}")
     
     # -- 5. DECODING --
-    print(f"\n[5] Decodifica risultati...")
+    print(f"\n[5] Decoding results...")
     macro_assign, top_bitstrings = decode_counts(counts, n_macro, K)
     
-    print(f"    Top 5 bitstring:")
+    print(f"    Top 5 bitstrings:")
     for bs, count in top_bitstrings[:5]:
-        print(f"      {bs}: {count} conteggi")
+        print(f"      {bs}: {count} counts")
     
-    print(f"    Assegnamento macro-strati: {macro_assign}")
+    print(f"    Macro-strata assignment: {macro_assign}")
     
     # -- 6. MAP TO ATOMIC STRATA --
-    print(f"\n[6] Mappatura a strati atomici...")
+    print(f"\n[6] Mapping to atomic strata...")
     atomic_assign = macro_to_atomic_assignment(macro_assign, macro, n_atomic)
     
     # -- 7. EVALUATION --
-    print(f"\n[7] Valutazione Bethel...")
+    print(f"\n[7] Bethel evaluation...")
     agg = aggregate(atomic, atomic_assign, K)
     n_sample, alloc, cvs = bethel(agg)
     
-    print(f"\n  â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—")
-    print(f"  â•‘  RISULTATO QAOA ({args.mode.upper():>9})               â•‘")
-    print(f"  â•‘  Dimensione campione: {n_sample:>5}                â•‘")
-    print(f"  â•‘  Strati aggregati:    {len(agg):>5}                â•‘")
-    print(f"  â•‘  CV(Y1): {cvs[0]:>7.4f}                        â•‘")
-    print(f"  â•‘  CV(Y2): {cvs[1]:>7.4f}                        â•‘")
-    print(f"  â•‘  Qubit usati:         {n_qubits:>5}                â•‘")
-    print(f"  â•‘  ProfonditÃ  QAOA:     p={args.p:>3}                â•‘")
-    print(f"  â•‘  Riferimento R (GA):     89                â•‘")
-    print(f"  â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•")
+    print(f"\n  ╔══════════════════════════════════════════════╗")
+    print(f"  ║  QAOA RESULT ({args.mode.upper():>9})                  ║")
+    print(f"  ║  Sample size:         {n_sample:>5}                ║")
+    print(f"  ║  Aggregated strata:   {len(agg):>5}                ║")
+    print(f"  ║  CV(Y1): {cvs[0]:>7.4f}                        ║")
+    print(f"  ║  CV(Y2): {cvs[1]:>7.4f}                        ║")
+    print(f"  ║  Qubits used:         {n_qubits:>5}                ║")
+    print(f"  ║  QAOA depth:          p={args.p:>3}                ║")
+    print(f"  ║  Reference n (GA):       89                ║")
+    print(f"  ╚══════════════════════════════════════════════╝")
     
     print(f"\n  {'#':>3} {'N':>6} {'Atom':>5} {'M(Y1)':>10} {'M(Y2)':>10} "
           f"{'S(Y1)':>10} {'S(Y2)':>10} {'n_h':>6}")
@@ -606,7 +689,7 @@ To obtain the IBM token:
     outfile = f'result_ibm_{args.mode}_K{K}.json'
     with open(outfile, 'w') as f:
         json.dump(result, f, indent=2, default=str)
-    print(f"\n  Risultati salvati in {outfile}")
+    print(f"\n  Results saved to {outfile}")
     
     return result
 

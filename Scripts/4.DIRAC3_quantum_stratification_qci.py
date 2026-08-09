@@ -600,7 +600,7 @@ def main():
         description='Quantum Stratification - QCi Dirac-3',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Esempi:
+Examples:
   # Offline test (no token, only shows the job body)
   python quantum_stratification_qci.py --csv swissmunicipalities.csv --dry-run
 
@@ -624,16 +624,16 @@ To obtain the QCi token:
     parser.add_argument('--url', default=os.environ.get('QCI_API_URL', 'https://api.qci-prod.com'))
     parser.add_argument('--K', type=int, default=4)
     parser.add_argument('--pre-group', type=int, default=None,
-                       help='Pre-aggrega i 164 strati atomici in N macro-strati '
-                            '(K-means) prima di risolvere. Necessario per il '
-                            'free-tier Dirac-3 (max 100 variabili). Es: --pre-group 90')
+                       help='Pre-aggregate the 164 atomic strata into N macro-strata '
+                            '(K-means) before solving. Needed for the '
+                            'Dirac-3 free tier (max 100 variables). E.g.: --pre-group 90')
     parser.add_argument('--cv', type=float, default=0.10)
     parser.add_argument('--y1', default='Surfacesbois',
-                       help='Prima variabile target Y1 (default: Surfacesbois)')
+                       help='First target variable Y1 (default: Surfacesbois)')
     parser.add_argument('--y2', default='Airind',
-                       help='Seconda variabile target Y2 (default: Airind)')
+                       help='Second target variable Y2 (default: Airind)')
     parser.add_argument('--benchmark', type=int, default=89,
-                       help='Valore di riferimento classico (default: 89)')
+                       help='Classical reference value (default: 89)')
     parser.add_argument('--formulation', choices=['qubo', 'integer'], default='qubo')
     parser.add_argument('--relaxation-schedule', type=int, default=2, choices=[1,2,3,4])
     parser.add_argument('--num-samples', type=int, default=10)
