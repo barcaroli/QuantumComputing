@@ -1,3 +1,6 @@
+# Optimal Stratification of a Sampling Frame: A Comparative Study of Classical, Quantum, and Quantum-Inspired Approaches
+
+
 Optimal stratification aggregates a large number of atomic strata into a small number of final strata so as to minimise the total sample size required to meet 
 target precision constraints, an objective that is combinatorial and, once reformulated as a within-cluster dispersion surrogate, expressible as a quadratic unconstrained 
 binary optimisation (QUBO) problem. This repository allows a controlled comparison of four solvers for that surrogate on an identical twenty-stratum frame drawn from the 
