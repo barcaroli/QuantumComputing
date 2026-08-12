@@ -82,4 +82,4 @@ solution <- optimStrata(method = "atomic",          # method
 # *** Number of strata :  4
 # ---------------------------
 
-write.table(strata,"swiss_municipalities.csv",sep=",",quote=F,row.names = F)
+write.table(swissmun,"swiss_municipalities.csv",sep=",",quote=F,row.names = F)
