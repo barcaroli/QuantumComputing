@@ -111,9 +111,9 @@ def prepare_frame(csv_path):
         N = len(g)
         strata.append({
             'STRATO': key, 'N': N,
-            'M1': g['Surfacesbois'].mean(), 'M2': g['Airind'].mean(),
+            'M1': g['Surfacesbois'].mean(), 'M2': g['Airbat'].mean(),
             'S1': g['Surfacesbois'].std(ddof=1) if N > 1 else 0.0,
-            'S2': g['Airind'].std(ddof=1) if N > 1 else 0.0,
+            'S2': g['Airbat'].std(ddof=1) if N > 1 else 0.0,
         })
     return pd.DataFrame(strata).reset_index(drop=True), df
 

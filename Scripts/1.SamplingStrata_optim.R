@@ -17,10 +17,10 @@ library(SamplingStrata)
 data("swissmunicipalities")
 swissmun <- swissmunicipalities[swissmunicipalities$REG == 1,
                                 c("REG","COM","Nom","HApoly",
-                                  "Surfacesbois","Surfacescult",
+                                  "Surfacesbois",
                                   "Airbat","POPTOT")]
 
-corrplot::corrplot(cor(swissmun[,c("HApoly","Surfacesbois","Surfacescult","Airbat","POPTOT")]))
+corrplot::corrplot(cor(swissmun[,c("HApoly","Surfacesbois","Airbat","POPTOT")]))
 
 swissmun$HApoly.cat <- var.bin(swissmun$HApoly,5)
 table(swissmun$HApoly.cat)

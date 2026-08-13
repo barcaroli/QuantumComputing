@@ -103,7 +103,7 @@ def var_bin(x, nbins):
     return lab + 1
 
 
-def prepare_frame(csv_path, reg=None, y1='Surfacesbois', y2='Airind'):
+def prepare_frame(csv_path, reg=None, y1='Surfacesbois', y2='Airbat'):
     df = pd.read_csv(csv_path)
     if reg is not None and 'REG' in df.columns:
         df = df[df['REG'] == reg].reset_index(drop=True)

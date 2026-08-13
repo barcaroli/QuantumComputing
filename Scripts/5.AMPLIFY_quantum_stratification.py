@@ -78,7 +78,7 @@ def var_bin(x, nbins):
     return labels + 1
 
 
-def prepare_frame(csv_path, reg=None, y1='Surfacesbois', y2='Airind'):
+def prepare_frame(csv_path, reg=None, y1='Surfacesbois', y2='Airbat'):
     """
     Build the atomic strata. Accepts either the pre-categorized layout
     (POPTOT.cat / HApoly.cat, used as-is) or the raw one (POPTOT / HApoly,
@@ -347,7 +347,7 @@ def main():
     ap.add_argument('--K', type=int, default=4)
     ap.add_argument('--cv', type=float, default=0.10)
     ap.add_argument('--y1', default='Surfacesbois')
-    ap.add_argument('--y2', default='Airind')
+    ap.add_argument('--y2', default='Airbat')
     ap.add_argument('--benchmark', type=int, default=129,
                     help="Classical reference to display (default: 129)")
     ap.add_argument('--timeout', type=int, default=3000,
