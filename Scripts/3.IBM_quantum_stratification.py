@@ -598,6 +598,12 @@ To obtain the IBM token:
   2. Register (free, Open plan: 10 min/month)
   3. Dashboard -> user icon -> Manage account -> API token -> Copy
         """)
+    parser.add_argument('--cv', type=float, nargs=2, default=[0.05, 0.05],
+                         metavar=('CV_Y1', 'CV_Y2'),
+                         help='CV target for Y1 and Y2 (default: 0.05 0.05). '
+                              'FIX: previously bethel() was called without this '
+                              'argument and silently used its internal default '
+                              'of [0.1, 0.1] instead of the intended 5%% constraint.')
     parser.add_argument('--mode', choices=['simulator', 'hardware'],
                        default='simulator')
     parser.add_argument('--csv', default='swissmunicipalities.csv')
@@ -709,14 +715,16 @@ To obtain the IBM token:
     # -- 7. EVALUATION --
     print(f"\n[7] Bethel evaluation...")
     agg = aggregate(atomic, atomic_assign, K)
-    n_sample, alloc, cvs = bethel(agg)
+    n_sample, alloc, cvs = bethel(agg, cv_targets=args.cv)
     
     print(f"\n  +------------------------------------------------+")
     print(f"  |  QAOA RESULT ({args.mode.upper():>9})                  |")
     print(f"  |  Sample size:         {n_sample:>5}                |")
     print(f"  |  Aggregated strata:   {len(agg):>5}                |")
-    print(f"  |  CV(Y1): {cvs[0]:>7.4f}                        |")
-    print(f"  |  CV(Y2): {cvs[1]:>7.4f}                        |")
+    print(f"  |  CV target(Y1):    {args.cv[0]:>7.4f}                |")
+    print(f"  |  CV target(Y2):    {args.cv[1]:>7.4f}                |")
+    print(f"  |  CV(Y1):              {cvs[0]:>7.4f}            |")
+    print(f"  |  CV(Y2):              {cvs[1]:>7.4f}            |")
     print(f"  |  Qubits used:         {n_qubits:>5}                |")
     print(f"  |  QAOA depth:          p={args.p:>3}                |")
     print(f"  |  Reference n (GA):       89                |")

@@ -17,8 +17,8 @@ REM python 2.DWave_quantum_stratification_qpu.py --mode simulate %COMMON% --K 4 
 
 REM --- IBM K=4 on real hardware ---
 REM NOTE: 3.IBM_quantum_stratification.py does not accept --cv/--y1/--y2/--benchmark
-REM (Y1/Y2 are hardcoded to Surfacesbois/Airind), so %COMMON% is NOT used here.
-REM python -X utf8 3.IBM_quantum_stratification.py --mode hardware --csv %CSV% --K 4 --n-macro 20 --p 1 --maxiter 2 --token "IBM_token" > out20_ibm_K4_hw.txt 2>&1
+REM (Y1/Y2 are hardcoded to Surfacesbois/Airbat), so %COMMON% is NOT used here.
+REM python -X utf8 3.IBM_quantum_stratification.py --mode hardware --csv --K 4 --n-macro 20 --p 1 --maxiter 2 --cv 0.05 0.05 --token "IBM_token" > out20_ibm_K4_hw.txt 2>&1
 
 REM --- Dirac-3 QUBO one-hot ---
 REM python 4.DIRAC3_quantum_stratification_qci.py %COMMON% --K 4 --formulation qubo --token "Dirac-3_token" > out20_dirac_K4.txt 2>&1
