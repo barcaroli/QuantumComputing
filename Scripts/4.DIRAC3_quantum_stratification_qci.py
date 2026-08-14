@@ -68,10 +68,10 @@ def var_bin(x, n_bins):
     labels, _ = vq(x_arr, np.sort(centroids, axis=0))
     return labels + 1
 
-def prepare_frame(csv_path, reg=None, y1='Surfacesbois', y2='Airind'):
+def prepare_frame(csv_path, reg=None, y1='Surfacesbois', y2='Airbat'):
     """
     Build the atomic strata from the sampling frame.
-    Y1, Y2 are target variable names (default Surfacesbois / Airind).
+    Y1, Y2 are target variable names (default Surfacesbois / Airbat).
 
     Accepts two CSV layouts automatically:
       (a) RAW: continuous columns 'POPTOT' and 'HApoly', binned here with
@@ -80,7 +80,7 @@ def prepare_frame(csv_path, reg=None, y1='Surfacesbois', y2='Airind'):
           containing the class codes, used directly. This matches a frame
           categorized upstream in R and avoids any binning mismatch.
 
-    Y variables are 'Surfacesbois' and 'Airind'. If a 'REG' column is present
+    Y variables are 'Surfacesbois' and 'Airbat'. If a 'REG' column is present
     and `reg` is given, the frame is filtered to that region first.
     """
     df = pd.read_csv(csv_path)
@@ -630,8 +630,8 @@ To obtain the QCi token:
     parser.add_argument('--cv', type=float, default=0.10)
     parser.add_argument('--y1', default='Surfacesbois',
                        help='First target variable Y1 (default: Surfacesbois)')
-    parser.add_argument('--y2', default='Airind',
-                       help='Second target variable Y2 (default: Airind)')
+    parser.add_argument('--y2', default='Airbat',
+                       help='Second target variable Y2 (default: Airbat)')
     parser.add_argument('--benchmark', type=int, default=89,
                        help='Classical reference value (default: 89)')
     parser.add_argument('--formulation', choices=['qubo', 'integer'], default='qubo')

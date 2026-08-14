@@ -8,7 +8,7 @@
  PREREQUISITES:
    1. IBM Quantum account (free): https://quantum.ibm.com
       Open plan: 10 min/month on real 100+ qubit processors
-   2. pip install qiskit qiskit-ibm-runtime qiskit-algorithms
+   2. pip install qiskit qiskit-ibm-runtime qiskit-algorithms qiskit-aer
       pip install pandas numpy scipy
    3. Save the IBM token (available in the IBM Quantum dashboard):
       In the IBM dashboard click your user icon in the top-right corner,
@@ -73,7 +73,7 @@
        --force-pregroup --n-macro 12
 ================================================================================
 """
-
+print(">>> SCRIPT STARTED, loading imports...", flush=True)
 import numpy as np
 import pandas as pd
 from scipy.cluster.vq import kmeans, vq
@@ -83,6 +83,11 @@ from math import ceil, sqrt
 import time
 import json
 import argparse
+
+
+
+import numpy as np
+import pandas as pd
 
 # ==============================================================================
 # DATA PREPARATION (same as the D-Wave version)
@@ -95,14 +100,16 @@ def var_bin(x, n_bins):
     labels, _ = vq(x_arr, np.sort(centroids, axis=0))
     return labels + 1
 
-def prepare_frame(csv_path):
+def prepare_frame(csv_path, reg=None, n_bins=5):
     df = pd.read_csv(csv_path)
+    if reg is not None and 'REG' in df.columns:
+        df = df[df['REG'] == reg].reset_index(drop=True)
     if 'POPTOT' in df.columns:
-        df['X1'] = var_bin(df['POPTOT'], 15)
+        df['X1'] = var_bin(df['POPTOT'], n_bins)
     else:
         df['X1'] = df['POPTOT.cat'].astype(int)
     if 'HApoly' in df.columns:
-        df['X2'] = var_bin(df['HApoly'], 15)
+        df['X2'] = var_bin(df['HApoly'], n_bins)
     else:
         df['X2'] = df['HApoly.cat'].astype(int)
     df['stratum_key'] = df['X1'].astype(str) + '*' + df['X2'].astype(str)
@@ -134,31 +141,74 @@ def aggregate(atomic, assignment, K):
         rows.append(row)
     return pd.DataFrame(rows)
 
-def bethel(agg, cv_targets=[0.1,0.1], minnumstr=2):
-    H = len(agg); N_h = agg['N'].values.astype(float)
-    allocs = []
-    for (mc,sc), cv in zip([('M1','S1'),('M2','S2')], cv_targets):
-        M, S = agg[mc].values.astype(float), agg[sc].values.astype(float)
-        Y = (N_h*M).sum()
-        if abs(Y)<1e-10: allocs.append(np.zeros(H)); continue
-        Vm=(cv*Y)**2; num=((N_h*S).sum())**2; den=Vm+(N_h*S**2).sum()
-        ng=num/den if den>0 else N_h.sum()
-        tNS=(N_h*S).sum()
-        allocs.append(ng*(N_h*S)/tNS if tNS>0 else np.ones(H)*ng/H)
-    n_tot = max(a.sum() for a in allocs)
-    fa = np.zeros(H)
-    for al in allocs:
-        s=al.sum(); fa=np.maximum(fa, al*(n_tot/s) if s>0 else al)
-    for h in range(H):
-        fa[h]=max(fa[h],minnumstr) if N_h[h]>=minnumstr else N_h[h]
-    fa = np.minimum(fa, N_h)
+def bethel(agg, cv_targets=[0.1,0.1], minnumstr=2, maxiter=200, maxiter1=25, epsilon=1e-11):
+    """
+    Bethel-Chromy optimal allocation (single domain, unit cost).
+
+    Verified to match SamplingStrata::bethel (Barcaroli et al.) and an
+    independent scipy SLSQP constrained optimizer. Implements the iterative
+    Chromy loop that jointly optimizes the weights across the target
+    variables, yielding the minimum total sample size that satisfies all
+    coefficient-of-variation constraints simultaneously.
+
+    Returns: (total_sample_size, per_stratum_allocation, achieved_cvs)
+    """
+    nstrat = len(agg)
+    nvar = len(cv_targets)
+    N = agg['N'].values.astype(float)
+    cens = np.zeros(nstrat)
+    cens[N < minnumstr] = 1
+    nocens = 1 - cens
+
+    med = agg[[f'M{i+1}' for i in range(nvar)]].values.astype(float)
+    esse = agg[[f'S{i+1}' for i in range(nvar)]].values.astype(float)
+    cv = np.array(cv_targets).astype(float)
+
+    # Bethel coefficient a_hg for stratum h, variable g
+    Nc = N.reshape(-1, 1); nocc = nocens.reshape(-1, 1)
+    numA = (Nc**2) * (esse**2) * nocc
+    denA1 = (np.sum(Nc * med * cv.reshape(1, -1), axis=0))**2
+    denA2 = np.sum(Nc * (esse**2) * nocc, axis=0)
+    a = numA / (denA1 + denA2 + epsilon)
+
+    # Chromy iterative loop: alfa weights the nvar variable-constraints
+    alfa = np.ones(nvar) / nvar
+    x = np.full(nstrat, 1e-6)
+    for _ in range(maxiter):
+        den1 = np.sqrt(np.sum(a * alfa.reshape(1, -1), axis=1))
+        den2 = np.sum(den1)
+        x = 1.0 / (den1 * den2 + epsilon)
+        axsum = np.sum(a * x.reshape(-1, 1), axis=0)
+        alfatot = max(np.sum(alfa * axsum), epsilon)
+        alfanext = alfa * axsum / alfatot
+        if np.max(np.abs(alfanext - alfa)) < epsilon:
+            break
+        alfa = alfanext
+
+    n = np.ceil(1.0 / x)
+
+    # Census adjustment
+    for _ in range(maxiter1):
+        n = np.minimum(n, N)
+        n = np.maximum(n, minnumstr)
+        cens[n > N] = 1
+        nocens = 1 - cens
+        if np.all(n <= N):
+            break
+    n = nocens * n + cens * N
+
+    # Achieved CVs
     cvs = []
-    for mc,sc in [('M1','S1'),('M2','S2')]:
-        M,S=agg[mc].values.astype(float),agg[sc].values.astype(float)
-        Y=(N_h*M).sum()
-        V=sum(N_h[h]**2*S[h]**2/fa[h]*(1-fa[h]/N_h[h]) for h in range(H) if fa[h]>0)
-        cvs.append(sqrt(V)/abs(Y) if Y else 0)
-    return ceil(fa.sum()), fa, cvs
+    for i in range(nvar):
+        M = med[:, i]; S = esse[:, i]
+        Y = (N * M).sum()
+        if abs(Y) < 1e-10:
+            cvs.append(0.0); continue
+        V = sum(N[h]**2 * S[h]**2 / n[h] * (1 - n[h]/N[h])
+                for h in range(nstrat) if n[h] > 0)
+        cvs.append(sqrt(V) / abs(Y))
+
+    return ceil(n.sum()), n, cvs
 
 
 # ==============================================================================
@@ -329,6 +379,7 @@ def build_ising_hamiltonian(macro_strata, K=2):
         raise ValueError(f"K={K} not supported. Use K=2 or K=4.")
 
 
+
 def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None, 
                p=2, maxiter=100, shots=4096):
     """
@@ -373,11 +424,12 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
     ansatz = build_qaoa_ansatz(hamiltonian, reps=p)
     print(f"    QAOA circuit: {ansatz.num_qubits} qubits, p={p}")
     print(f"    Variational parameters: {ansatz.num_parameters}")
+    print(f"    Ansatz depth: {ansatz.depth()}, gate count: {ansatz.size()}", flush=True)
     
     if mode == 'simulator':
-        # -- LOCAL SIMULATOR --
-        from qiskit.primitives import StatevectorEstimator
-        estimator = StatevectorEstimator()
+        # -- LOCAL SIMULATOR (AerSimulator/MPS: memory-efficient for large circuits) --
+        from qiskit_aer.primitives import EstimatorV2 as AerEstimator
+        estimator = AerEstimator(options={"backend_options": {"method": "matrix_product_state"}})
         
         # Initial parameters
         x0 = np.random.uniform(-np.pi, np.pi, ansatz.num_parameters)
@@ -399,8 +451,8 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
         t_opt = time.time() - t0
         
         # Sample the optimal circuit
-        from qiskit.primitives import StatevectorSampler
-        sampler = StatevectorSampler()
+        from qiskit_aer.primitives import SamplerV2 as AerSampler
+        sampler = AerSampler(options={"backend_options": {"method": "matrix_product_state"}})
         
         optimal_circuit = ansatz.assign_parameters(
             dict(zip(ansatz.parameters, result.x)))
@@ -415,27 +467,27 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
     elif mode == 'hardware':
         # -- REAL IBM HARDWARE (open plan: single-job mode) --
         # Open plan does not allow Sessions. Strategy:
-        #   1. Optimise parameters locally with StatevectorEstimator (fast, free)
+        #   1. Optimise parameters locally with AerEstimator/MPS (handles large circuits)
         #   2. Submit one Sampler job to QPU with the optimal circuit
         from qiskit_ibm_runtime import QiskitRuntimeService
         from qiskit_ibm_runtime import SamplerV2 as Sampler
-        from qiskit.primitives import StatevectorEstimator
+        from qiskit_aer.primitives import EstimatorV2 as AerEstimator
 
-        # -- Step 1: classical parameter optimization --
-        print(f"    Optimizing parameters (local simulator)...")
-        estimator = StatevectorEstimator()
+        # -- Step 1: classical parameter optimization (AerSimulator/MPS, memory-efficient) --
+        print(f"    Optimizing parameters (local AerSimulator/MPS, {n_qubits} qubits)...")
+        estimator = AerEstimator(options={"backend_options": {"method": "matrix_product_state"}})
         x0 = np.random.uniform(-np.pi, np.pi, ansatz.num_parameters)
         objective_values = []
 
         def cost_fn(params):
+            t_call = time.time()
             bound = ansatz.assign_parameters(dict(zip(ansatz.parameters, params)))
             result = estimator.run([(bound, hamiltonian)]).result()
             cost = float(result[0].data.evs)
             objective_values.append(cost)
-            if len(objective_values) % 10 == 0:
-                print(f"      Iteration {len(objective_values)}: cost={cost:.4f}")
+            print(f"      Eval {len(objective_values)}: cost={cost:.4f}  ({time.time()-t_call:.1f}s)", flush=True)
             return cost
-
+          
         t0 = time.time()
         opt_result = minimize(cost_fn, x0, method='COBYLA',
                               options={'maxiter': maxiter, 'rhobeg': 0.5})
@@ -446,7 +498,8 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
         print(f"    Connecting to IBM Quantum...")
         service = QiskitRuntimeService(
             channel='ibm_quantum_platform',
-            token=token
+            token=token,
+            instance='crn:v1:bluemix:public:quantum-computing:us-east:a/52a254141f594bd08fd41edf88f01fa8:da9b9121-47a2-4270-992c-38eebc3b57ab::'
         )
 
         backend = service.least_busy(
@@ -468,7 +521,7 @@ def solve_qaoa(pauli_list, n_qubits, mode='simulator', token=None,
 
         sampler = Sampler(mode=backend)
         job = sampler.run([isa_circuit], shots=shots)
-        print(f"    Job ID: {job.job_id()}  — waiting for results...")
+        print(f"    Job ID: {job.job_id()}  - waiting for results...")
         sample_result = job.result()
         counts = sample_result[0].data.meas.get_counts()
 
@@ -548,6 +601,12 @@ To obtain the IBM token:
     parser.add_argument('--mode', choices=['simulator', 'hardware'],
                        default='simulator')
     parser.add_argument('--csv', default='swissmunicipalities.csv')
+    parser.add_argument('--reg', type=int, default=None,
+                       help='Filter to a single REG value (e.g. --reg 1 for the '
+                            '20-stratum reduced frame used in the paper)')
+    parser.add_argument('--n-bins', type=int, default=5,
+                       help='Bins per stratification variable (default: 5, '
+                            'giving the 5x5=20-stratum frame used in the paper)')
     parser.add_argument('--token', default=None,
                        help='IBM Quantum API token')
     parser.add_argument('--K', type=int, default=2, choices=[2, 4],
@@ -569,17 +628,17 @@ To obtain the IBM token:
     args = parser.parse_args()
     
     print("=" * 72)
-    print(" QUANTUM STRATIFICATION — IBM Quantum (QAOA)")
+    print(" QUANTUM STRATIFICATION - IBM Quantum (QAOA)")
     print(f" Mode: {args.mode.upper()}")
     if args.mode == 'hardware':
-        print(" ⚛️  RUNNING ON A REAL IBM QUANTUM PROCESSOR")
+        print(" RUNNING ON A REAL IBM QUANTUM PROCESSOR")
     else:
-        print(" 💻 LOCAL SIMULATOR (no token required)")
+        print(" LOCAL SIMULATOR (no token required)")
     print("=" * 72)
     
     # -- 1. DATA --
     print("\n[1] Preparing data...")
-    atomic, df = prepare_frame(args.csv)
+    atomic, df = prepare_frame(args.csv, reg=args.reg, n_bins=args.n_bins)
     n_atomic = len(atomic)
     K = args.K
     
@@ -614,13 +673,13 @@ To obtain the IBM token:
     
     # ── 4. QAOA ──
     print(f"\n[4] QAOA (p={args.p})...")
-    print(f"    ╔════════════════════════════════════════════════╗")
-    print(f"    ║  THIS IS THE GENUINELY QUANTUM COMPUTATION    ║")
+    print(f"    +--------------------------------------------------+")
+    print(f"    |  THIS IS THE GENUINELY QUANTUM COMPUTATION        |")
     if args.mode == 'hardware':
-        print(f"    ║  Executed on real IBM superconducting qubits  ║")
+        print(f"    |  Executed on real IBM superconducting qubits      |")
     else:
-        print(f"    ║  Simulated locally (no quantum effect)        ║")
-    print(f"    ╚════════════════════════════════════════════════╝")
+        print(f"    |  Simulated locally (no quantum effect)            |")
+    print(f"    +--------------------------------------------------+")
     
     np.random.seed(42)
     counts, energy, t_opt, obj_values = solve_qaoa(
@@ -652,16 +711,16 @@ To obtain the IBM token:
     agg = aggregate(atomic, atomic_assign, K)
     n_sample, alloc, cvs = bethel(agg)
     
-    print(f"\n  ╔══════════════════════════════════════════════╗")
-    print(f"  ║  QAOA RESULT ({args.mode.upper():>9})                  ║")
-    print(f"  ║  Sample size:         {n_sample:>5}                ║")
-    print(f"  ║  Aggregated strata:   {len(agg):>5}                ║")
-    print(f"  ║  CV(Y1): {cvs[0]:>7.4f}                        ║")
-    print(f"  ║  CV(Y2): {cvs[1]:>7.4f}                        ║")
-    print(f"  ║  Qubits used:         {n_qubits:>5}                ║")
-    print(f"  ║  QAOA depth:          p={args.p:>3}                ║")
-    print(f"  ║  Reference n (GA):       89                ║")
-    print(f"  ╚══════════════════════════════════════════════╝")
+    print(f"\n  +------------------------------------------------+")
+    print(f"  |  QAOA RESULT ({args.mode.upper():>9})                  |")
+    print(f"  |  Sample size:         {n_sample:>5}                |")
+    print(f"  |  Aggregated strata:   {len(agg):>5}                |")
+    print(f"  |  CV(Y1): {cvs[0]:>7.4f}                        |")
+    print(f"  |  CV(Y2): {cvs[1]:>7.4f}                        |")
+    print(f"  |  Qubits used:         {n_qubits:>5}                |")
+    print(f"  |  QAOA depth:          p={args.p:>3}                |")
+    print(f"  |  Reference n (GA):       89                |")
+    print(f"  +------------------------------------------------+")
     
     print(f"\n  {'#':>3} {'N':>6} {'Atom':>5} {'M(Y1)':>10} {'M(Y2)':>10} "
           f"{'S(Y1)':>10} {'S(Y2)':>10} {'n_h':>6}")
